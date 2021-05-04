@@ -467,252 +467,254 @@ if __name__ == '__main__':
 
                     return [yout1,yout2]
             genSuffixModel = genSuffixModel + '_SZeros'
-        elif flagProcess[kk] == 4:
-            lr_Sampling = 1.
+    #elif flagProcess[kk] == 4:
+    lr_Sampling = 1.
 
-            print('genSuffixModel:'+genSuffixModel)    
-           
-            # mean-squared error loss
-            
-            alpha            = np.array([0.1,0.5])#np.array([1.,0.1])
-            alpha_L1Sampling = 0.5
-            thr_L1Sampling   = 1.0 #0.05#0.025 # 0.05 ()
-            alpha_SR         = 0.5
-            alpha_LR         = 0.5#1e4
-            
-            num_epochs     =200
-            SaveStep       =20
+    print('genSuffixModel:'+genSuffixModel)    
+   
+    # mean-squared error loss
+    
+    alpha            = np.array([0.1,0.5])#np.array([1.,0.1])
+    alpha_L1Sampling = 0.5
+    thr_L1Sampling   = 1.0 #0.05#0.025 # 0.05 ()
+    alpha_SR         = 0.5
+    alpha_LR         = 0.5#1e4
+    
+    num_epochs     =200
+    SaveStep       =20
 
-            IterUpdate     = [0,25,50,100,500,600,800]#[0,2,4,6,9,15]
-            NbGradIter     = [5,5,10,10,15,15,20,20,20]#[0,0,1,2,3,3]#[0,2,2,4,5,5]#
-            lrUpdate       = [1e-3,1e-4,1e-4,1e-5,1e-4,1e-5,1e-5,1e-6,1e-7]
-            
-            NBGradCurrent   = NbGradIter[0]
-            lrCurrent       = lrUpdate[0]
-            
-            
-            # optimization setting: freeze or not the AE
-            lambda_LRAE = 0.5
-            
-            # training function for dinAE
-            since = time.time()
+    IterUpdate     = [0,25,50,100,500,600,800]#[0,2,4,6,9,15]
+    NbGradIter     = [5,5,10,10,15,15,20,20,20]#[0,0,1,2,3,3]#[0,2,2,4,5,5]#
+    lrUpdate       = [1e-3,1e-4,1e-4,1e-5,1e-4,1e-5,1e-5,1e-6,1e-7]
+    
+    NBGradCurrent   = NbGradIter[0]
+    lrCurrent       = lrUpdate[0]
+    
+    
+    # optimization setting: freeze or not the AE
+    lambda_LRAE = 0.5
+    
+    # training function for dinAE
+    since = time.time()
+
+    alpha_Grad = alpha[0]
+    #alpha_FP   = 1. - alpha[0]
+    alpha_AE   = alpha[1]
+    
+    # Suffix for file naming
+    genSuffixModelBase = genSuffixModel
+    
+    genSuffixModel = genSuffixModelBase+genSuffixObs
+    if lambda_LRAE == 0. :
+        genSuffixModel = genSuffixModel+'_NoFTrAE'
+    
+    if flagUseObsData == True :
+        genSuffixModel = genSuffixModel+'_HRObs'
         
-            alpha_Grad = alpha[0]
-            #alpha_FP   = 1. - alpha[0]
-            alpha_AE   = alpha[1]
-            
-            # Suffix for file naming
-            genSuffixModelBase = genSuffixModel
-            
-            genSuffixModel = genSuffixModelBase+genSuffixObs
-            if lambda_LRAE == 0. :
-                genSuffixModel = genSuffixModel+'_NoFTrAE'
-            
-            if flagUseObsData == True :
-                genSuffixModel = genSuffixModel+'_HRObs'
-                
-            if flagUseOI == True :
-                genSuffixModel = genSuffixModel+'_OIObs'
+    if flagUseOI == True :
+        genSuffixModel = genSuffixModel+'_OIObs'
 
+    if flagMultiScale == True :
+        genSuffixModel = genSuffixModel+'_MS'
+
+    if flagNoUseObsCDay == True :
+        genSuffixModel = genSuffixModel+'_UnSup'
+        
+    #genSuffixModel = genSuffixModel+'_Nproj'+str('%02d'%(NBProjCurrent))
+    genSuffixModel = genSuffixModel+'_Grad_'+str('%02d'%(GradType))+'_'+str('%02d'%(OptimType))+'_'+str('%02d'%(NBGradCurrent))+'_'+str('%02d'%(dimGradSolver))
+
+    print('...... Suffix trained models: '+genSuffixModel)
+
+    best_loss = 1e10
+
+    # loss weghing wrt time
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    w_            = np.zeros(dT,)
+    w_[int(dT/2)] = 1.
+    wLoss         = torch.Tensor(w_)
+    
+    
+    betaX = 1.0
+    betagX = 1.0
+    # compute the mean loss for OI
+    for phase in ['train']:        
+            
+        running_loss_GOI     = 0.
+        running_loss_OI      = 0.
+        num_loss = 0
+        
+        for targets_OI,targets_OI1,inputs_Mask,targets_GT in train_dataloader:
+
+            # gradient norm field
+            g_targets_GT   = gradient_img( targets_GT )
+
+
+            loss_OI    = NN_4DVar.compute_WeightedLoss(targets_GT-targets_OI,wLoss)
+            loss_GOI   = NN_4DVar.compute_WeightedLoss(gradient_img( targets_OI )-g_targets_GT,wLoss)
+
+                    
+            running_loss_GOI         += loss_GOI.item() * targets_GT.size(0)
+            running_loss_OI          += loss_OI.item() * targets_GT.size(0)
+   
+            num_loss                 += targets_GT.size(0)
+      
+        epoch_loss_GOI    = running_loss_GOI  / num_loss
+        epoch_loss_OI     = running_loss_OI / num_loss
+           
+        betaX  = 1. / epoch_loss_OI
+        betagX = 1. / epoch_loss_GOI
+        
+        print(".... MSE(Tr) OI %.3f -- MSE(Tr) gOI %.3f "%(epoch_loss_OI,epoch_loss_GOI))
+    wLoss         = wLoss.to(device)      
+    comptUpdate = 1
+    iterInit    = 0#498
+    class LitModel(pl.LightningModule):
+        def __init__(self):
+            super().__init__()
+            self.m_Grad 	    = NN_4DVar.model_GradUpdate2(shapeData,GradType,UsePriodicBoundary,model_H.DimObs,model_H.dimObsChannel,dimGradSolver,rateDropout)     
+            self.model          = NN_4DVar.Solver_Grad_4DVarNN(phi_r,model_H, self.m_Grad, shapeData,NBGradCurrent,GradType,OptimType,InterpFlag,UsePriodicBoundary,dimGradSolver,rateDropout)
+            self.modelSave      = NN_4DVar.Solver_Grad_4DVarNN(phi_r,model_H, self.m_Grad, shapeData,NBGradCurrent,GradType,OptimType,InterpFlag,UsePriodicBoundary,dimGradSolver,rateDropout) 
+            self.IterUpdate     = [0,25,50,100,500,600,800]#[0,2,4,6,9,15]
+            self.NbGradIter     = [5,5,10,10,15,15,20,20,20]#[0,0,1,2,3,3]#[0,2,2,4,5,5]#
+            self.lrUpdate       = [1e-3,1e-4,1e-4,1e-5,1e-4,1e-5,1e-5,1e-6,1e-7]
+            self.model_S     = Model_Sampling()
+            self.modelSave_S = Model_Sampling()
+            self.gradient_img = gradient_img
+            self.model_LR = model_LR
+
+        def forward():
+            return 1
+
+        def configure_optimizers(self):
+            optimizer   = optim.Adam([{'params': self.model.model_Grad.parameters()},
+                            {'params': self.model.phi_r.encoder.parameters(), 'lr': lambda_LRAE*lrCurrent},
+                            {'params': self.model.phi_r.decoder.parameters(), 'lr': lambda_LRAE*lrCurrent}
+                            ], lr=lrCurrent)
+    
+            optimizer_Sampling =  optim.Adam(self.model_S.parameters(),lr= lr_Sampling * lrCurrent)
+
+            scheduler1 = MultiStepLR(optimizer, milestones=[0,25,50,100,500,600,800], gamma=0.1)
+            scheduler2 = MultiStepLR(optimizer_Sampling, milestones=[0,25,50,100,500,600,800], gamma=0.05)
+
+            return [optimizer,optimizer_Sampling],[scheduler1,scheduler2]
+
+        def training_step(self,train_batch,batch_idx,optimizer_idx):
+            if (self.current_epoch in self.IterUpdate) & (self.current_epoch > 0) :
+                indx = self.IterUpdate.index(self.current_epoch)
+                self.model.NGrad = self.NbGradIter[indx]
+            loss = self.compute_loss(train_batch,phase='train')
+            return loss
+
+        def validation_step(self,val_batch,batch_idx):
+            loss = self.compute_loss(val_batch,phase='val')
+            return loss
+        """
+        def test_step(self,):
+
+            return loss
+        """
+        def compute_loss(self,batch,phase):
+            running_loss         = 0.0
+            
+            num_loss             = 0
+        
+            targets_OI,targets_OI1,inputs_Mask,targets_GT = batch
+            
+            # use low-resolution
             if flagMultiScale == True :
-                genSuffixModel = genSuffixModel+'_MS'
-
-            if flagNoUseObsCDay == True :
-                genSuffixModel = genSuffixModel+'_UnSup'
+                targets_GTLR = self.model_LR(targets_OI)
                 
-            #genSuffixModel = genSuffixModel+'_Nproj'+str('%02d'%(NBProjCurrent))
-            genSuffixModel = genSuffixModel+'_Grad_'+str('%02d'%(GradType))+'_'+str('%02d'%(OptimType))+'_'+str('%02d'%(NBGradCurrent))+'_'+str('%02d'%(dimGradSolver))
+                # sampling mask
+                new_masks = self.model_S(torch.cat((targets_OI1,targets_OI1),dim=1))                                
 
-            print('...... Suffix trained models: '+genSuffixModel)
-
-            best_loss = 1e10
-    
-            # loss weghing wrt time
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            w_            = np.zeros(dT,)
-            w_[int(dT/2)] = 1.
-            wLoss         = torch.Tensor(w_)
-            
-            
-            betaX = 1.0
-            betagX = 1.0
-            # compute the mean loss for OI
-            for phase in ['train']:        
-                    
-                running_loss_GOI     = 0.
-                running_loss_OI      = 0.
-                num_loss = 0
-                
-                for targets_OI,targets_OI1,inputs_Mask,targets_GT in train_dataloader:
-
-                    # gradient norm field
-                    g_targets_GT   = gradient_img( targets_GT )
-    
-
-                    loss_OI    = NN_4DVar.compute_WeightedLoss(targets_GT-targets_OI,wLoss)
-                    loss_GOI   = NN_4DVar.compute_WeightedLoss(gradient_img( targets_OI )-g_targets_GT,wLoss)
-
-                            
-                    running_loss_GOI         += loss_GOI.item() * targets_GT.size(0)
-                    running_loss_OI          += loss_OI.item() * targets_GT.size(0)
-           
-                    num_loss                 += targets_GT.size(0)
-              
-                epoch_loss_GOI    = running_loss_GOI  / num_loss
-                epoch_loss_OI     = running_loss_OI / num_loss
+                if flagUseObsData == True :
+                    inputs_Mask2 = inputs_Mask.repeat(1,2,1,1)
+                    new_masks[0] = inputs_Mask2 + (1.0 - inputs_Mask2) * new_masks[0]
+                    new_masks[1] = inputs_Mask2 + (1.0 - inputs_Mask2) * new_masks[1]
+                              
+                # init
+                if flagUseOI == True :
+                    new_masks[0][:,0:dT,:,:] = 1.0 + 0. * new_masks[0][:,0:dT,:,:]
+                    new_masks[1][:,0:dT,:,:] = 1.0 + 0. * new_masks[1][:,0:dT,:,:]
+               
+                idxSampMat     = int(1)
+                mask_t         = 1. - torch.nn.functional.threshold( 1.0 - new_masks[idxSampMat] , 0.9 , 0.)
                    
-                betaX  = 1. / epoch_loss_OI
-                betagX = 1. / epoch_loss_GOI
-                
-                print(".... MSE(Tr) OI %.3f -- MSE(Tr) gOI %.3f "%(epoch_loss_OI,epoch_loss_GOI))
-            wLoss         = wLoss.to(device)      
-            comptUpdate = 1
-            iterInit    = 0#498
-            class LitModel(pl.LightningModule):
-                def __init__(self):
-                    super().__init__()
-                    self.m_Grad 	    = NN_4DVar.model_GradUpdate2(shapeData,GradType,UsePriodicBoundary,model_H.DimObs,model_H.dimObsChannel,dimGradSolver,rateDropout)     
-                    self.model          = NN_4DVar.Solver_Grad_4DVarNN(phi_r,model_H, self.m_Grad, shapeData,NBGradCurrent,GradType,OptimType,InterpFlag,UsePriodicBoundary,dimGradSolver,rateDropout)
-                    self.modelSave      = NN_4DVar.Solver_Grad_4DVarNN(phi_r,model_H, self.m_Grad, shapeData,NBGradCurrent,GradType,OptimType,InterpFlag,UsePriodicBoundary,dimGradSolver,rateDropout) 
-                    self.IterUpdate     = [0,25,50,100,500,600,800]#[0,2,4,6,9,15]
-                    self.NbGradIter     = [5,5,10,10,15,15,20,20,20]#[0,0,1,2,3,3]#[0,2,2,4,5,5]#
-                    self.lrUpdate       = [1e-3,1e-4,1e-4,1e-5,1e-4,1e-5,1e-5,1e-6,1e-7]
-                    self.model_S     = Model_Sampling()
-                    self.modelSave_S = Model_Sampling()
-                    self.gradient_img = gradient_img
-                    self.model_LR = model_LR
+                mask_t = mask_t[:,dT:,:,:]
 
-                def forward():
-                    return 1
+                if flagUseOI == True :
+                    inputs_init    = torch.cat((targets_OI , mask_t * (targets_GT-targets_OI)),dim=1)
+                    inputs_missing = torch.cat((targets_OI , mask_t * (targets_GT-targets_OI)),dim=1)                                
 
-                def configure_optimizers(self):
-                    optimizer   = optim.Adam([{'params': self.model.model_Grad.parameters()},
-                                    {'params': self.model.phi_r.encoder.parameters(), 'lr': lambda_LRAE*lrCurrent},
-                                    {'params': self.model.phi_r.decoder.parameters(), 'lr': lambda_LRAE*lrCurrent}
-                                    ], lr=lrCurrent)
-            
-                    optimizer_Sampling =  optim.Adam(self.model_S.parameters(),lr= lr_Sampling * lrCurrent)
+            # gradient norm field
+            g_targets_GT   = self.gradient_img( targets_GT )
 
-                    scheduler1 = MultiStepLR(optimizer, milestones=[0,25,50,100,500,600,800], gamma=0.1)
-                    scheduler2 = MultiStepLR(optimizer_Sampling, milestones=[0,25,50,100,500,600,800], gamma=0.05)
-
-                    return [optimizer,optimizer_Sampling],[scheduler1,scheduler2]
-
-                def training_step(self,train_batch,batch_idx,optimizer_idx):
-                    if (self.current_epoch in self.IterUpdate) & (self.current_epoch > 0) :
-                        indx = self.IterUpdate.index(self.current_epoch)
-                        self.model.NGrad = self.NbGradIter[indx]
-                    loss = self.compute_loss(train_batch)
-                    return loss
-
-                def validation_step(self,val_batch,batch_idx):
-                    loss = self.compute_loss(val_batch)
-                    return loss
-                """
-                def test_step(self,):
-
-                    return loss
-                """
-                def compute_loss(self,batch):
-                    running_loss         = 0.0
+            # need to evaluate grad/backward during the evaluation and training phase for phi_r
+            with torch.set_grad_enabled(True): 
+            #with torch.set_grad_enabled(phase == 'train'):
+                inputs_init    = torch.autograd.Variable(inputs_init, requires_grad=True)
+                if self.model.OptimType == 1:
+                    outputs,grad_new,normgrad = self.model(inputs_init,inputs_missing,new_masks[idxSampMat])
                     
-                    num_loss             = 0
+                elif self.model.OptimType == 2:
+                    outputs,hidden_new,cell_new,normgrad = self.model(inputs_init,inputs_missing,new_masks[idxSampMat])
+
+                else:                               
+                    outputs,normgrad = self.model(inputs_init,inputs_missing,new_masks[idxSampMat])
                 
-                    targets_OI,targets_OI1,inputs_Mask,targets_GT = batch
-                    
-                    # use low-resolution
-                    if flagMultiScale == True :
-                        targets_GTLR = self.model_LR(targets_OI)
-                        
-                        # sampling mask
-                        new_masks = self.model_S(torch.cat((targets_OI1,targets_OI1),dim=1))                                
+                if phase == 'val':
+                	outputs = outputs.detach()
+                
+                if flagMultiScale == True :
+                    outputsSLRHR = outputs
+                    outputsSLR   = outputs[:,0:dT,:,:].view(-1,dT,shapeData[1],shapeData[2])
+                    outputs      = outputsSLR + outputs[:,dT:,:,:].view(-1,dT,shapeData[1],shapeData[2])
 
-                        if flagUseObsData == True :
-                            inputs_Mask2 = inputs_Mask.repeat(1,2,1,1)
-                            new_masks[0] = inputs_Mask2 + (1.0 - inputs_Mask2) * new_masks[0]
-                            new_masks[1] = inputs_Mask2 + (1.0 - inputs_Mask2) * new_masks[1]
-                                      
-                        # init
-                        if flagUseOI == True :
-                            new_masks[0][:,0:dT,:,:] = 1.0 + 0. * new_masks[0][:,0:dT,:,:]
-                            new_masks[1][:,0:dT,:,:] = 1.0 + 0. * new_masks[1][:,0:dT,:,:]
-                       
-                        idxSampMat     = int(1)
-                        mask_t         = 1. - torch.nn.functional.threshold( 1.0 - new_masks[idxSampMat] , 0.9 , 0.)
-                           
-                        mask_t = mask_t[:,dT:,:,:]
+                # losses
+                g_outputs   = self.gradient_img( outputs )
 
-                        if flagUseOI == True :
-                            inputs_init    = torch.cat((targets_OI , mask_t * (targets_GT-targets_OI)),dim=1)
-                            inputs_missing = torch.cat((targets_OI , mask_t * (targets_GT-targets_OI)),dim=1)                                
+                loss_All    = NN_4DVar.compute_WeightedLoss((outputs-targets_GT) , wLoss)
+                loss_GAll   = NN_4DVar.compute_WeightedLoss(g_outputs-g_targets_GT,wLoss)
 
-                    # gradient norm field
-                    g_targets_GT   = self.gradient_img( targets_GT )
+                loss_All1    = NN_4DVar.compute_WeightedLoss(outputs-targets_OI,wLoss)
+                loss_GAll1   = NN_4DVar.compute_WeightedLoss(g_outputs-self.gradient_img( targets_OI ),wLoss)
 
-                    # need to evaluate grad/backward during the evaluation and training phase for phi_r
-                    with torch.set_grad_enabled(True): 
-                    #with torch.set_grad_enabled(phase == 'train'):
-                        inputs_init    = torch.autograd.Variable(inputs_init, requires_grad=True)
-                        if self.model.OptimType == 1:
-                            outputs,grad_new,normgrad = self.model(inputs_init,inputs_missing,new_masks[idxSampMat])
-                            
-                        elif self.model.OptimType == 2:
-                            outputs,hidden_new,cell_new,normgrad = self.model(inputs_init,inputs_missing,new_masks[idxSampMat])
-        
-                        else:                               
-                            outputs,normgrad = self.model(inputs_init,inputs_missing,new_masks[idxSampMat])
+                loss_OI    = NN_4DVar.compute_WeightedLoss(targets_GT-targets_OI,wLoss)
+                loss_GOI   = NN_4DVar.compute_WeightedLoss(self.gradient_img( targets_OI )-g_targets_GT,wLoss)
 
-                        
-                        if flagMultiScale == True :
-                            outputsSLRHR = outputs
-                            outputsSLR   = outputs[:,0:dT,:,:].view(-1,dT,shapeData[1],shapeData[2])
-                            outputs      = outputsSLR + outputs[:,dT:,:,:].view(-1,dT,shapeData[1],shapeData[2])
+                mean_GAll   = NN_4DVar.compute_WeightedLoss(g_targets_GT,wLoss)
+                
+                loss_AE    = torch.mean((self.model.phi_r(outputsSLRHR) - outputsSLRHR)**2 ) 
+                yGT        = torch.cat((targets_GT,outputsSLR-targets_GT),dim=1)
+                loss_AE_GT = torch.mean((self.model.phi_r(yGT) - yGT)**2 ) 
 
-                        # losses
-                        g_outputs   = self.gradient_img( outputs )
+                ## L1 vs. L0 cost for the sampling operator
+                if flagMultiScale == True :
+                    loss_Sampling = torch.mean( new_masks[idxSampMat][:,dT:,:,:] )
+                    loss_Sampling2 = torch.mean(1. - torch.nn.functional.threshold( 1. - new_masks[idxSampMat][:,dT:,:,:] , 0.9 , 0. ))                            
+                
+                loss_Sampling = torch.nn.functional.relu( loss_Sampling - thr_L1Sampling )
 
-                        loss_All    = NN_4DVar.compute_WeightedLoss((outputs-targets_GT) , wLoss)
-                        loss_GAll   = NN_4DVar.compute_WeightedLoss(g_outputs-g_targets_GT,wLoss)
+                # training loss
+                loss        = alpha_Grad * (betaX * loss_All + betagX * loss_GAll) + 0.5 * alpha_AE * ( loss_AE + loss_AE_GT )
+                loss       += alpha_L1Sampling * loss_Sampling
 
-                        loss_All1    = NN_4DVar.compute_WeightedLoss(outputs-targets_OI,wLoss)
-                        loss_GAll1   = NN_4DVar.compute_WeightedLoss(g_outputs-self.gradient_img( targets_OI ),wLoss)
+                if flagMultiScale == True :                                
+                    loss_SR    = NN_4DVar.compute_WeightedLoss(outputsSLR-targets_OI,wLoss)
+                    loss_LR    = NN_4DVar.compute_WeightedLoss(self.model_LR(outputs)-targets_GTLR,wLoss)
+                    loss    += alpha_LR * loss_LR + alpha_SR * loss_SR
 
-                        loss_OI    = NN_4DVar.compute_WeightedLoss(targets_GT-targets_OI,wLoss)
-                        loss_GOI   = NN_4DVar.compute_WeightedLoss(self.gradient_img( targets_OI )-g_targets_GT,wLoss)
+                loss_All    = NN_4DVar.compute_WeightedLoss((outputs-targets_GT) , wLoss)
+                loss_GAll   = NN_4DVar.compute_WeightedLoss(g_outputs-g_targets_GT,wLoss)
 
-                        mean_GAll   = NN_4DVar.compute_WeightedLoss(g_targets_GT,wLoss)
-                        
-                        loss_AE    = torch.mean((self.model.phi_r(outputsSLRHR) - outputsSLRHR)**2 ) 
-                        yGT        = torch.cat((targets_GT,outputsSLR-targets_GT),dim=1)
-                        loss_AE_GT = torch.mean((self.model.phi_r(yGT) - yGT)**2 ) 
-        
-                        ## L1 vs. L0 cost for the sampling operator
-                        if flagMultiScale == True :
-                            loss_Sampling = torch.mean( new_masks[idxSampMat][:,dT:,:,:] )
-                            loss_Sampling2 = torch.mean(1. - torch.nn.functional.threshold( 1. - new_masks[idxSampMat][:,dT:,:,:] , 0.9 , 0. ))                            
-                        
-                        loss_Sampling = torch.nn.functional.relu( loss_Sampling - thr_L1Sampling )
-        
-                        # training loss
-                        loss        = alpha_Grad * (betaX * loss_All + betagX * loss_GAll) + 0.5 * alpha_AE * ( loss_AE + loss_AE_GT )
-                        loss       += alpha_L1Sampling * loss_Sampling
-
-                        if flagMultiScale == True :                                
-                            loss_SR    = NN_4DVar.compute_WeightedLoss(outputsSLR-targets_OI,wLoss)
-                            loss_LR    = NN_4DVar.compute_WeightedLoss(self.model_LR(outputs)-targets_GTLR,wLoss)
-                            loss    += alpha_LR * loss_LR + alpha_SR * loss_SR
-
-                        loss_All    = NN_4DVar.compute_WeightedLoss((outputs-targets_GT) , wLoss)
-                        loss_GAll   = NN_4DVar.compute_WeightedLoss(g_outputs-g_targets_GT,wLoss)
-
-                        # statistics
-                        running_loss             += loss.item() * inputs_missing.size(0)
-                        num_loss                 += inputs_missing.size(0)
-              
-                    epoch_loss       = running_loss / num_loss
-                    return loss 
-            
-            mod = LitModel()
-            # training
-            trainer = pl.Trainer(gpus=1,max_epochs=10)
-            trainer.fit(mod, train_dataloader, val_dataloder)
+                # statistics
+                running_loss             += loss.item() * inputs_missing.size(0)
+                num_loss                 += inputs_missing.size(0)
+      
+            epoch_loss       = running_loss / num_loss
+            return loss 
+    
+    mod = LitModel()
+    # training
+    trainer = pl.Trainer(gpus=4,max_epochs=10)
+    trainer.fit(mod, train_dataloader, val_dataloder)
